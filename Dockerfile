@@ -4,7 +4,7 @@ RUN apt update -y && apt upgrade -y
 
 RUN apt install libxml2 -y
 
-RUN apt install python3 -y && apt install python3-pip -y && apt install python3.10-venv
+RUN apt install python3 -y && apt install python3-pip -y && apt install python3.10-venv -y
 
 WORKDIR /app
 
