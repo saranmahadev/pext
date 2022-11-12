@@ -35,7 +35,7 @@ def logout():
 
 @app.route('/favicon.ico')
 def favicon():
-    return send_file("static/img/favicon.ico")
+    return send_file("static/img/logo.svg")
 
 if __name__ == '__main__':
     app.run(debug=True)

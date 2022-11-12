@@ -7,9 +7,6 @@ from modules.transaction import Transaction
 import requests
 import os 
 
-def liveNews(self, query="") -> dict:
-    data = requests.get(f'https://newsapi.org/v2/everything?q=economics+{query}&apiKey={os.environ["NEWS_API_KEY"]}')
-    return data.json()
 
 dashBp = Blueprint("dash", __name__, url_prefix="/dash")
 
@@ -27,9 +24,14 @@ def transactions():
 @dashBp.route("/news", methods = ['GET'])
 def news():    
     if request.args.get("q") != None:
-        return render_template("news.html", title = f"News | {request.args.get('q')}", news = liveNews(request.args.get("q")))
+        return render_template("news.html", title = f"News | {request.args.get('q')}", news = requests.get(f'https://newsapi.org/v2/everything?q=economics+{request.args.get("q")}&apiKey={os.environ["NEWS_API_KEY"]}').json())
     else:
-        return render_template("news.html", title = "News", news = liveNews())
+        return render_template("news.html", title = "News", news = requests.get(f'https://newsapi.org/v2/everything?q=economics&apiKey={os.environ["NEWS_API_KEY"]}').json())
+
+@dashBp.route("/calc", methods = ['GET'])
+def calc():        
+    return render_template("calc.html", title = "Calc")
+
 
 @dashBp.route("/wallets")
 def wallets():

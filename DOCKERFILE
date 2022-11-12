@@ -1,18 +1,21 @@
-FROM python:3.8-alpine
+FROM ubuntu:22.04
 
-# copy the requirements file into the image
-COPY ./requirements.txt /app/requirements.txt
+RUN apt update -y && apt upgrade -y
 
-# switch working directory
+RUN apt install libxml2 -y
+
+RUN apt install python3 -y && apt install python3-pip -y && apt install python3.10-venv
+
 WORKDIR /app
 
-# install the dependencies and packages in the requirements file
+COPY ./requirements.txt /app/requirements.txt
+
 RUN pip install -r requirements.txt
 
-# copy every content from the local file to the image
 COPY . /app
 
-# configure the container to run in an executed manner
+RUN python3 -m venv /app/env
+
 ENTRYPOINT [ "python" ]
 
 CMD ["app.py" ]
