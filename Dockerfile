@@ -16,6 +16,8 @@ COPY . /app
 
 RUN python3 -m venv /app/env
 
+EXPOSE 5000
+
 ENTRYPOINT [ "python3" ]
 
 CMD ["app.py" ]
