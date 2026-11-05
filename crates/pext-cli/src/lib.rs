@@ -65,6 +65,7 @@ const GLOBALS: &[&str] = &[
     "watch",
     "redact",
     "private",
+    "chart",
     "passphrase_file",
     "help",
     "version",
@@ -195,12 +196,78 @@ pub fn build_cli() -> Command {
         .arg(Arg::new("out").long("out").global(true).help("write the output to this file"))
         .arg(Arg::new("watch").long("watch").global(true).help("re-run a read command every N seconds"))
         .arg(Arg::new("redact").long("redact").global(true).action(ArgAction::SetTrue).help("mask payees, memos and notes in the output"))
+        .arg(Arg::new("chart").long("chart").global(true).value_parser(["bar"]).help("add a terminal bar chart to table output"))
         .arg(Arg::new("private").long("private").global(true).action(ArgAction::SetTrue).help("hide all amounts (for screenshots)"))
         .arg(Arg::new("passphrase_file").long("passphrase-file").global(true).help("file holding the backup/sync passphrase (env PEXT_PASSPHRASE)"));
     for (child, n) in &tree.children {
         cmd = cmd.subcommand(node_command(child, child, n));
     }
     cmd.subcommand(
+        Command::new("serve")
+            .about("Run the local web dashboard and HTTP API (loopback only by default)")
+            .arg(
+                Arg::new("addr")
+                    .long("addr")
+                    .default_value("127.0.0.1:7878")
+                    .help("address to listen on"),
+            )
+            .arg(
+                Arg::new("web")
+                    .long("web")
+                    .action(ArgAction::SetTrue)
+                    .help("serve the web dashboard (default: web and api)"),
+            )
+            .arg(
+                Arg::new("api")
+                    .long("api")
+                    .action(ArgAction::SetTrue)
+                    .help("serve the HTTP API (default: web and api)"),
+            )
+            .arg(
+                Arg::new("allow_remote")
+                    .long("allow-remote")
+                    .action(ArgAction::SetTrue)
+                    .help("allow a non-loopback address (put a TLS proxy in front)"),
+            )
+            .arg(
+                Arg::new("allow_confirm")
+                    .long("allow-confirm")
+                    .action(ArgAction::SetTrue)
+                    .help("let API callers confirm destructive operations"),
+            )
+            .arg(
+                Arg::new("rate_limit")
+                    .long("rate-limit")
+                    .default_value("300")
+                    .help("requests per minute per token"),
+            )
+            .arg(
+                Arg::new("max_role")
+                    .long("max-role")
+                    .default_value("write")
+                    .value_parser(["read", "append", "write", "full"])
+                    .help("highest role any caller can use, whatever their token says"),
+            ),
+    )
+    .subcommand(Command::new("tui").about("Interactive terminal dashboard (read-only)"))
+    .subcommand(
+        Command::new("mcp")
+            .about("Run an MCP server on stdin/stdout for AI agents")
+            .arg(
+                Arg::new("profile")
+                    .long("profile")
+                    .default_value("read")
+                    .value_parser(["read", "append", "write"])
+                    .help("what the agent may do: read, append (add only) or write"),
+            )
+            .arg(
+                Arg::new("allow_confirm")
+                    .long("allow-confirm")
+                    .action(ArgAction::SetTrue)
+                    .help("let the agent confirm destructive operations itself"),
+            ),
+    )
+    .subcommand(
         Command::new("completions")
             .about("Print a shell completion script (bash, zsh, fish, powershell, elvish)")
             .arg(Arg::new("shell").required(true).value_parser([
@@ -376,6 +443,26 @@ where
     if let Some(("completions", sub)) = matches.subcommand() {
         return completions(sub, out);
     }
+    if let Some(("tui", _)) = matches.subcommand() {
+        let pretty = matches.get_flag("pretty");
+        return match run_tui(&matches, env) {
+            Ok(code) => code,
+            Err(e) => emit_error(&e, Format::Json, pretty, out, err),
+        };
+    }
+    if let Some((name @ ("serve" | "mcp"), sub)) = matches.subcommand() {
+        let pretty = matches.get_flag("pretty");
+        let format = Format::Json;
+        let r = if name == "serve" {
+            run_serve(&matches, sub, env, out, err)
+        } else {
+            run_mcp(&matches, sub, env, out, err)
+        };
+        return match r {
+            Ok(code) => code,
+            Err(e) => emit_error(&e, format, pretty, out, err),
+        };
+    }
     let pretty = matches.get_flag("pretty");
     let format = match matches.get_one::<String>("output") {
         Some(s) => match Format::parse(s) {
@@ -388,6 +475,23 @@ where
         Ok(code) => code,
         Err(e) => emit_error(&e, format, pretty, out, err),
     }
+}
+
+fn build_engine(m: &ArgMatches, env: &Env) -> Result<Engine> {
+    let today = match &env.today {
+        Some(t) => Some(parse_today(t)?),
+        None => None,
+    };
+    let mut cfg = EngineConfig::new(db_path(env, m.get_one::<String>("db")));
+    cfg.today = today;
+    cfg.passphrase = match m.get_one::<String>("passphrase_file") {
+        Some(f) => Some(pext_engine::crypto::Secret(read_passphrase_file(f)?)),
+        None => env.passphrase.clone().map(pext_engine::crypto::Secret),
+    };
+    if env.kdf_fast {
+        cfg.kdf = pext_engine::crypto::KdfParams::insecure_fast();
+    }
+    Ok(Engine::new(cfg))
 }
 
 fn execute(
@@ -409,20 +513,7 @@ fn execute(
     })?;
     let raw = extract(op, sub);
     let quiet = m.get_flag("quiet");
-    let today = match &env.today {
-        Some(t) => Some(parse_today(t)?),
-        None => None,
-    };
-    let mut cfg = EngineConfig::new(db_path(env, m.get_one::<String>("db")));
-    cfg.today = today;
-    cfg.passphrase = match m.get_one::<String>("passphrase_file") {
-        Some(f) => Some(pext_engine::crypto::Secret(read_passphrase_file(f)?)),
-        None => env.passphrase.clone().map(pext_engine::crypto::Secret),
-    };
-    if env.kdf_fast {
-        cfg.kdf = pext_engine::crypto::KdfParams::insecure_fast();
-    }
-    let engine = Engine::new(cfg);
+    let engine = build_engine(m, env)?;
     let token = m
         .get_one::<String>("token")
         .cloned()
@@ -484,6 +575,30 @@ fn execute(
             default_currency: base,
         };
         let mut text = pext_render::render(format, &output.data, &output.meta, &ropts)?;
+        if m.get_one::<String>("chart").is_some() {
+            if !matches!(format, Format::Table | Format::Md) {
+                return Err(Error::usage(
+                    "chart_needs_table",
+                    "--chart works with table output (-o table)",
+                ));
+            }
+            match pext_render::bar_chart(&output.data, &ropts, 40) {
+                Some(c) => {
+                    if !text.ends_with('\n') {
+                        text.push('\n');
+                    }
+                    text.push('\n');
+                    text.push_str(&c);
+                }
+                None if !quiet => {
+                    let _ = writeln!(
+                        err,
+                        "warning: no chart for this result (it needs rows with a money column)"
+                    );
+                }
+                None => {}
+            }
+        }
         if !text.ends_with('\n') {
             text.push('\n');
         }
@@ -624,4 +739,136 @@ impl NameOwned for OpSpec {
     fn name_owned(&self) -> String {
         self.name.to_string()
     }
+}
+
+// ---- serve / mcp -------------------------------------------------------------------
+
+/// The caller identity for long-running front ends: a token if one is given,
+/// otherwise the local owner (capped by the gateway).
+fn front_actor(gw: &pext_server::Gateway, m: &ArgMatches, env: &Env) -> Result<pext_engine::Actor> {
+    let token = m
+        .get_one::<String>("token")
+        .cloned()
+        .or_else(|| env.token.clone());
+    match token {
+        Some(t) => gw.authenticate(&t),
+        None => Ok(gw.owner("local")),
+    }
+}
+
+fn run_mcp(
+    root: &ArgMatches,
+    sub: &ArgMatches,
+    env: &Env,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<i32> {
+    let profile = sub
+        .get_one::<String>("profile")
+        .map(String::as_str)
+        .unwrap_or("read");
+    let role = pext_server::mcp::profile_role(profile)
+        .ok_or_else(|| Error::usage("invalid_profile", "profile must be read, append or write"))?;
+    let engine = build_engine(root, env)?;
+    let gw = pext_server::Gateway::new(engine, role, sub.get_flag("allow_confirm"));
+    let actor = front_actor(&gw, root, env)?;
+    if !root.get_flag("quiet") {
+        let _ = writeln!(
+            err,
+            "pext mcp: profile {profile}, role {}",
+            actor.role.as_str()
+        );
+    }
+    let stdin = std::io::stdin();
+    pext_server::mcp::serve(&gw, &actor, stdin.lock(), &mut *out)
+        .map_err(|e| Error::io("mcp_io", format!("stdio failed: {e}")))?;
+    Ok(0)
+}
+
+fn run_serve(
+    root: &ArgMatches,
+    sub: &ArgMatches,
+    env: &Env,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<i32> {
+    let (mut web, mut api) = (sub.get_flag("web"), sub.get_flag("api"));
+    if !web && !api {
+        web = true;
+        api = true;
+    }
+    let max_role = match sub.get_one::<String>("max_role").map(String::as_str) {
+        Some("read") => pext_engine::Role::Read,
+        Some("append") => pext_engine::Role::Append,
+        Some("full") => pext_engine::Role::Admin,
+        _ => pext_engine::Role::Write,
+    };
+    let rate = sub
+        .get_one::<String>("rate_limit")
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|v| *v > 0)
+        .ok_or_else(|| {
+            Error::usage(
+                "invalid_rate_limit",
+                "--rate-limit must be a positive number",
+            )
+        })?;
+    let cfg = pext_server::http::ServerConfig {
+        addr: sub.get_one::<String>("addr").cloned().unwrap_or_default(),
+        web,
+        api,
+        allow_remote: sub.get_flag("allow_remote"),
+        rate_per_min: rate,
+        io_timeout_secs: 10,
+    };
+    let engine = build_engine(root, env)?;
+    // The database must exist before we start listening.
+    if !engine.cfg.db_path.exists() {
+        return Err(Error::not_found(
+            "db_not_found",
+            format!("no database at {}", engine.cfg.db_path.display()),
+        )
+        .with_hint("run `pext init` first"));
+    }
+    let gw = pext_server::Gateway::new(engine, max_role, sub.get_flag("allow_confirm"));
+    let app = std::sync::Arc::new(pext_server::http::App::new(gw, cfg));
+    let running = pext_server::http::start(app)?;
+    let url = format!("http://{}", running.addr);
+    let line = json!({"schema": "pext/v1", "ok": true, "data": {"listening": url, "web": web, "api": api, "max_role": max_role.as_str()}, "meta": {}});
+    let _ = writeln!(out, "{line}");
+    let _ = out.flush();
+    if !root.get_flag("quiet") {
+        let _ = writeln!(err, "pext serve: {url} (Ctrl-C to stop). Create a token with `pext token create --name web --role read`.");
+    }
+    running.wait();
+    Ok(0)
+}
+
+fn run_tui(root: &ArgMatches, env: &Env) -> Result<i32> {
+    use std::io::IsTerminal;
+    if !env.is_tty || !std::io::stdin().is_terminal() {
+        return Err(
+            Error::usage("not_a_terminal", "the TUI needs an interactive terminal")
+                .with_hint("use `pext report summary` or `pext serve` when output is piped"),
+        );
+    }
+    let engine = build_engine(root, env)?;
+    if !engine.cfg.db_path.exists() {
+        return Err(Error::not_found(
+            "db_not_found",
+            format!("no database at {}", engine.cfg.db_path.display()),
+        )
+        .with_hint("run `pext init` first"));
+    }
+    let actor = match root
+        .get_one::<String>("token")
+        .cloned()
+        .or_else(|| env.token.clone())
+    {
+        Some(t) => engine.authenticate(&t)?,
+        None => pext_engine::Actor::owner(),
+    };
+    pext_tui::run_terminal(engine, actor)
+        .map_err(|e| Error::io("tui_io", format!("terminal error: {e}")))?;
+    Ok(0)
 }

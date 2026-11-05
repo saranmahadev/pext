@@ -1,0 +1,16 @@
+[package]
+name = "pext-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "pext terminal UI"
+
+[dependencies]
+pext-core = { path = "../pext-core" }
+pext-engine = { path = "../pext-engine" }
+ratatui = "0.30.2"
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[dev-dependencies]
+tempfile = "3"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }

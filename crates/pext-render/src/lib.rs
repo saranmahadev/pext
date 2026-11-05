@@ -180,6 +180,100 @@ fn display_key(key: &str) -> String {
 }
 
 /// Names that mark the main record list of a result that carries several.
+const CHART_VALUES: &[&str] = &[
+    "amount_minor",
+    "spent_minor",
+    "net_minor",
+    "value_base_minor",
+    "value_minor",
+    "balance_minor",
+    "expense_minor",
+];
+const CHART_LABELS: &[&str] = &[
+    "name", "category", "payee", "month", "period", "label", "symbol", "account", "group", "date",
+];
+
+/// A horizontal bar chart of the first money column against a label column,
+/// for list-shaped results. Returns `None` when the data has no such shape
+/// (for example when amounts are masked). Positive values are `█`, negative `▒`.
+pub fn bar_chart(data: &Value, opts: &Opts, width: usize) -> Option<String> {
+    let list: &Vec<Value> = match data {
+        Value::Array(a) => a,
+        Value::Object(m) => PREFERRED_LISTS
+            .iter()
+            .find_map(|k| m.get(*k).and_then(|v| v.as_array()))?,
+        _ => return None,
+    };
+    let rows: Vec<&Map<String, Value>> = list.iter().filter_map(|v| v.as_object()).collect();
+    if rows.is_empty() {
+        return None;
+    }
+    let first = rows[0];
+    let vkey = CHART_VALUES
+        .iter()
+        .find(|k| first.get(**k).map(|v| v.is_number()).unwrap_or(false))
+        .map(|k| k.to_string())
+        .or_else(|| {
+            first
+                .iter()
+                .find(|(k, v)| is_minor(k) && v.is_number())
+                .map(|(k, _)| k.clone())
+        })?;
+    let lkey = CHART_LABELS
+        .iter()
+        .find(|k| first.get(**k).map(|v| v.is_string()).unwrap_or(false))
+        .map(|k| k.to_string())
+        .or_else(|| {
+            first
+                .iter()
+                .find(|(_, v)| v.is_string())
+                .map(|(k, _)| k.clone())
+        })?;
+    let max = rows
+        .iter()
+        .filter_map(|r| r.get(&vkey).and_then(|v| v.as_i64()))
+        .map(|v| v.unsigned_abs())
+        .max()?;
+    if max == 0 {
+        return None;
+    }
+    let labels: Vec<String> = rows
+        .iter()
+        .map(|r| {
+            r.get(&lkey)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(24)
+                .collect()
+        })
+        .collect();
+    let values: Vec<String> = rows
+        .iter()
+        .map(|r| cell(&vkey, r.get(&vkey).unwrap_or(&Value::Null), r, opts, true))
+        .collect();
+    let lw = labels.iter().map(|l| width_of(l)).max().unwrap_or(0);
+    let vw = values.iter().map(|v| width_of(v)).max().unwrap_or(0);
+    let mut out = format!("{} by {}\n", display_key(&vkey), display_key(&lkey));
+    for (i, r) in rows.iter().enumerate() {
+        let v = r.get(&vkey).and_then(|v| v.as_i64()).unwrap_or(0);
+        let cells = ((v.unsigned_abs() as u128 * width as u128).div_ceil(max as u128)) as usize;
+        let glyph = if v < 0 { "▒" } else { "█" };
+        out.push_str(&format!(
+            "{}  {}  {}\n",
+            pad(&labels[i], lw, false),
+            pad(&values[i], vw, true),
+            glyph.repeat(cells.min(width))
+        ));
+    }
+    Some(out)
+}
+
+fn width_of(s: &str) -> usize {
+    width(s)
+}
+
 const PREFERRED_LISTS: &[&str] = &[
     "rows",
     "items",

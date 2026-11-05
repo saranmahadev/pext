@@ -535,6 +535,7 @@ fn registry_is_consistent() {
                     "token",
                     "out",
                     "watch",
+                    "chart",
                     "help",
                     "version"
                 ]

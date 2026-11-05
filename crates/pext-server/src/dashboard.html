@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>pext</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#16181d;--mute:#667085;--line:#e4e7ec;--acc:#2457d6;--good:#16794c;--warn:#b25e09;--bad:#b42318;--bar:#dbe4fb}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--card:#171b22;--ink:#e8eaee;--mute:#8d96a5;--line:#262c36;--acc:#7da2ff;--good:#4ec38a;--warn:#e8a04a;--bad:#ff7b72;--bar:#26324f}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--line);background:var(--card);position:sticky;top:0}
+h1{font-size:18px;margin:0;letter-spacing:.2px}
+h1 span{color:var(--mute);font-weight:400;font-size:13px;margin-left:8px}
+main{max-width:1100px;margin:0 auto;padding:16px;display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
+.card.wide{grid-column:1/-1}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.8px;color:var(--mute);margin:0 0 10px;font-weight:600}
+.big{font-size:30px;font-weight:650;letter-spacing:-.5px}
+.sub{color:var(--mute);font-size:13px}
+.row{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:0}
+.row .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .n.wrap{white-space:normal}
+.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.neg{color:var(--bad)}.pos{color:var(--good)}
+.bar{height:8px;background:var(--bar);border-radius:6px;overflow:hidden;margin-top:4px}
+.bar i{display:block;height:100%;background:var(--acc)}
+.bar.warning i{background:var(--warn)}.bar.over i{background:var(--bad)}
+.pill{font-size:11px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--mute)}
+.pill.critical{color:var(--bad);border-color:var(--bad)}.pill.warning{color:var(--warn);border-color:var(--warn)}
+button,input{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 11px}
+button{cursor:pointer}button:hover{border-color:var(--acc)}
+input{width:100%}
+#login{max-width:420px;margin:12vh auto;padding:0 16px}
+#login .card{display:grid;gap:10px}
+.err{color:var(--bad);min-height:1.2em;font-size:13px}
+body.private .num,body.private .big{filter:blur(7px);user-select:none}
+.empty{color:var(--mute);font-size:13px}
+@media (max-width:520px){main{padding:10px}.big{font-size:26px}}
+</style>
+</head>
+<body>
+<div id="login" hidden>
+  <div class="card">
+    <h1>pext</h1>
+    <div class="sub">Paste an access token. Create one with <code>pext token create --name web --role read</code>. It stays in this tab only.</div>
+    <input id="tok" type="password" autocomplete="off" placeholder="pext_…" aria-label="access token">
+    <button id="go">Open dashboard</button>
+    <div class="err" id="lerr" role="alert"></div>
+  </div>
+</div>
+<div id="app" hidden>
+  <header>
+    <h1>pext<span id="asof"></span></h1>
+    <div><button id="priv" aria-pressed="false">Hide amounts</button> <button id="reload">Refresh</button> <button id="out">Sign out</button></div>
+  </header>
+  <main id="grid"></main>
+</div>
+<script>
+(function(){
+"use strict";
+var KEY="pext.token";
+var token=null;
+try{token=sessionStorage.getItem(KEY);}catch(e){}
+function $(id){return document.getElementById(id);}
+function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined&&text!==null)e.textContent=String(text);return e;}
+function money(minor,cur){
+  if(minor===null||minor===undefined)return "–";
+  try{
+    var nf=new Intl.NumberFormat(cur==="INR"?"en-IN":undefined,{style:"currency",currency:cur||"USD"});
+    var d=nf.resolvedOptions().maximumFractionDigits;
+    return nf.format(minor/Math.pow(10,d));
+  }catch(e){return String(minor);}
+}
+function api(op,args){
+  return fetch("/v1/call/"+op,{method:"POST",headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json"},body:JSON.stringify(args||{})})
+    .then(function(r){return r.json().then(function(j){if(!r.ok||!j.ok){var m=(j&&j.error&&j.error.message)||("HTTP "+r.status);var err=new Error(m);err.status=r.status;throw err;}return j.data;});});
+}
+function card(title,wide){var c=el("section","card"+(wide?" wide":""));c.appendChild(el("h2",null,title));return c;}
+function row(left,right,cls){var r=el("div","row");r.appendChild(el("span","n",left));r.appendChild(el("span","num "+(cls||""),right));return r;}
+function sign(v){return v<0?"neg":(v>0?"pos":"");}
+function empty(c,t){c.appendChild(el("div","empty",t));}
+function bar(pct,state){var b=el("div","bar "+(state||""));var i=el("i");i.style.width=Math.max(0,Math.min(100,pct))+"%";b.appendChild(i);return b;}
+
+function renderNetWorth(d){
+  var c=card("Net worth");
+  c.appendChild(el("div","big num "+sign(d.net_worth_minor),money(d.net_worth_minor,d.currency)));
+  c.appendChild(el("div","sub num","Assets "+money(d.assets_minor,d.currency)+" · Liabilities "+money(d.liabilities_minor,d.currency)));
+  (d.groups||[]).forEach(function(g){c.appendChild(row(g.group,money(g.net_minor,d.currency),sign(g.net_minor)));});
+  return c;
+}
+function renderMonth(d){
+  var c=card("This month");
+  c.appendChild(el("div","big num "+sign(d.net_minor),money(d.net_minor,d.currency)));
+  c.appendChild(el("div","sub num","In "+money(d.income_minor,d.currency)+" · Out "+money(d.expense_minor,d.currency)+(d.savings_rate_pct!==null&&d.savings_rate_pct!==undefined?" · Saved "+d.savings_rate_pct+"%":"")));
+  var top=d.top_categories||[];
+  top.slice(0,6).forEach(function(t){
+    var w=el("div");w.appendChild(row(t.name,money(t.amount_minor,d.currency)));w.appendChild(bar(t.share_pct));c.appendChild(w);
+  });
+  if(!top.length)empty(c,"No spending yet this month.");
+  return c;
+}
+function renderAccounts(list){
+  var c=card("Accounts");
+  list.filter(function(a){return !a.archived;}).forEach(function(a){c.appendChild(row(a.name+" · "+a.kind,money(a.balance_minor,a.currency),sign(a.balance_minor)));});
+  if(!list.length)empty(c,"No accounts.");
+  return c;
+}
+function renderBudgets(d){
+  var c=card("Budgets");
+  (d.budgets||[]).forEach(function(b){
+    var w=el("div");
+    w.appendChild(row(b.category+" · "+b.pct_used+"%",money(b.spent_minor,d.currency)+" / "+money(b.available_minor,d.currency),b.state==="over"?"neg":""));
+    w.appendChild(bar(b.pct_used,b.state));c.appendChild(w);
+  });
+  if(!(d.budgets||[]).length)empty(c,"No budgets set.");
+  return c;
+}
+function renderGoals(list){
+  var c=card("Goals");
+  list.filter(function(g){return !g.archived;}).forEach(function(g){
+    var w=el("div");
+    w.appendChild(row(g.name+" · "+g.pct+"%",money(g.saved_minor,g.currency)+" / "+money(g.target_minor,g.currency)));
+    w.appendChild(bar(g.pct));c.appendChild(w);
+  });
+  if(!list.length)empty(c,"No goals yet.");
+  return c;
+}
+function renderAlerts(list){
+  var c=card("Needs attention");
+  list.slice(0,8).forEach(function(a){
+    var r=el("div","row");r.appendChild(el("span","n wrap",a.message));r.appendChild(el("span","pill "+a.severity,a.severity));c.appendChild(r);
+  });
+  if(!list.length)empty(c,"Nothing needs attention.");
+  return c;
+}
+function renderTxns(list){
+  var c=card("Recent transactions",true);
+  list.forEach(function(t){
+    var l=t.date+"  "+(t.payee||"(no payee)")+(t.category?" · "+t.category:"")+" · "+t.account;
+    c.appendChild(row(l,money(t.amount_minor,t.currency),sign(t.amount_minor)));
+  });
+  if(!list.length)empty(c,"No transactions.");
+  return c;
+}
+function load(){
+  var grid=$("grid");
+  var jobs=[["networth",{}],["report.summary",{}],["acct.list",{}],["budget.status",{}],["goal.status",{}],["alert.check",{}],["txn.list",{limit:15}]];
+  Promise.all(jobs.map(function(j){return api(j[0],j[1]).then(function(d){return {ok:true,d:d};},function(e){return {ok:false,e:e};});})).then(function(rs){
+    if(rs.some(function(r){return !r.ok&&r.e.status===401;})){signOut("Token rejected.");return;}
+    grid.textContent="";
+    var fns=[renderNetWorth,renderMonth,renderAccounts,renderBudgets,renderGoals,renderAlerts,renderTxns];
+    rs.forEach(function(r,i){
+      if(r.ok){grid.appendChild(fns[i](r.d));}
+      else{var c=card(jobs[i][0]);c.appendChild(el("div","empty",r.e.message));grid.appendChild(c);}
+    });
+    if(rs[0].ok)$("asof").textContent="as of "+rs[0].d.date;
+  });
+}
+function show(app){$("app").hidden=!app;$("login").hidden=app;}
+function signOut(msg){token=null;try{sessionStorage.removeItem(KEY);}catch(e){}show(false);$("lerr").textContent=msg||"";}
+$("go").onclick=function(){
+  var t=$("tok").value.trim();if(!t){$("lerr").textContent="Enter a token.";return;}
+  token=t;$("lerr").textContent="";
+  api("whoami",{}).then(function(){try{sessionStorage.setItem(KEY,token);}catch(e){}$("tok").value="";show(true);load();},
+    function(e){token=null;$("lerr").textContent=e.message;});
+};
+$("tok").onkeydown=function(e){if(e.key==="Enter")$("go").click();};
+$("reload").onclick=load;
+$("out").onclick=function(){signOut("");};
+$("priv").onclick=function(){var on=document.body.classList.toggle("private");this.setAttribute("aria-pressed",on?"true":"false");};
+if(token){show(true);load();}else{show(false);}
+})();
+</script>
+</body>
+</html>

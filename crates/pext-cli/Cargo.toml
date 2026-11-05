@@ -17,6 +17,8 @@ path = "src/lib.rs"
 pext-core = { path = "../pext-core" }
 pext-engine = { path = "../pext-engine" }
 pext-render = { path = "../pext-render" }
+pext-server = { path = "../pext-server" }
+pext-tui = { path = "../pext-tui" }
 clap = { version = "4", features = ["string", "env"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }

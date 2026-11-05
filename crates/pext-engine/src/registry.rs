@@ -207,6 +207,12 @@ pub const GROUPS: &[(&str, &str)] = &[
     ("cat", "Categories (hierarchical, e.g. food.delivery)"),
     ("payee", "Payees and merchant-name normalisation"),
     ("tag", "Tags"),
+    ("data", "Destructive data operations"),
+    ("export", "Export everything"),
+    ("price", "Instrument prices"),
+    ("snapshot", "Net-worth snapshots over time"),
+    ("target", "Target asset allocation"),
+    ("trade", "Buys, sells and dividends"),
     (
         "import",
         "Import statements (CSV, OFX) with de-duplication and rollback",

@@ -459,3 +459,69 @@ fn commands_listing_marks_local_only_operations() {
     }
     assert_eq!(find("txn.add")["local_only"], false);
 }
+
+#[test]
+fn terminal_bar_charts() {
+    let c = Cli::new("a.db");
+    c.seed();
+    c.ok(&[
+        "txn",
+        "add",
+        "--account",
+        "Bank",
+        "--amount",
+        "-500",
+        "--category",
+        "housing.rent",
+    ]);
+    let r = c.run(&["report", "spending", "-o", "table", "--chart", "bar"]);
+    assert_eq!(r.code, 0, "{} {}", r.out, r.err);
+    assert!(r.out.contains('█'), "{}", r.out);
+    assert!(
+        r.out.contains("housing.rent") && r.out.contains("food"),
+        "{}",
+        r.out
+    );
+    // the biggest row gets the longest bar (40 cells), the smaller a shorter one
+    let bars: Vec<usize> = r
+        .out
+        .lines()
+        .map(|l| l.matches('█').count())
+        .filter(|n| *n > 0)
+        .collect();
+    assert_eq!(bars.iter().max(), Some(&40));
+    assert!(bars.iter().min() < bars.iter().max());
+    // negative balances use a different glyph
+    c.ok(&[
+        "acct",
+        "add",
+        "--name",
+        "Card",
+        "--kind",
+        "credit_card",
+        "--opening",
+        "0",
+    ]);
+    c.ok(&["txn", "add", "--account", "Card", "--amount", "-100"]);
+    let r = c.run(&["acct", "list", "-o", "table", "--chart", "bar"]);
+    assert!(r.out.contains('▒') && r.out.contains('█'), "{}", r.out);
+    // machine formats refuse, masked amounts produce no chart (and no leak)
+    assert_eq!(
+        c.run(&["acct", "list", "-o", "json", "--chart", "bar"])
+            .code,
+        2
+    );
+    let p = c.run(&["acct", "list", "-o", "table", "--chart", "bar", "--private"]);
+    assert!(
+        !p.out.contains('█') && p.err.contains("no chart"),
+        "{} / {}",
+        p.out,
+        p.err
+    );
+    // other chart types are rejected up front
+    assert_eq!(c.run(&["acct", "list", "--chart", "pie"]).code, 2);
+    // results without rows just warn
+    let r = c.run(&["doctor", "-o", "table", "--chart", "bar"]);
+    assert_eq!(r.code, 0);
+    assert!(r.err.contains("no chart"));
+}

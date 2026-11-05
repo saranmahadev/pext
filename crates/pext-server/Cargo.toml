@@ -1,0 +1,16 @@
+[package]
+name = "pext-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "pext MCP server, local HTTP API and web dashboard"
+
+[dependencies]
+pext-core = { path = "../pext-core" }
+pext-engine = { path = "../pext-engine" }
+pext-render = { path = "../pext-render" }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[dev-dependencies]
+tempfile = "3"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
