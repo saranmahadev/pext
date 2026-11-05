@@ -4,8 +4,11 @@
 
 pub mod dates;
 pub mod error;
+pub mod invest;
+pub mod loan;
 pub mod money;
 pub mod qlang;
 pub mod query;
+pub mod xirr;
 
 pub use error::{Error, ErrorKind, Result};

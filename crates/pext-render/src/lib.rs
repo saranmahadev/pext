@@ -179,7 +179,33 @@ fn display_key(key: &str) -> String {
     key.strip_suffix("_minor").unwrap_or(key).to_string()
 }
 
-fn currency_of<'a>(row: &'a Map<String, Value>, opts: &'a Opts) -> Option<&'a str> {
+/// Names that mark the main record list of a result that carries several.
+const PREFERRED_LISTS: &[&str] = &[
+    "rows",
+    "items",
+    "holdings",
+    "cards",
+    "categories",
+    "months",
+    "budgets",
+    "moves",
+    "people",
+    "classes",
+    "instruments",
+    "events",
+    "transactions",
+];
+
+/// Currency for a money column. `*_base_minor` columns are always in the
+/// base currency (the row's `base_currency` if it names one, else the
+/// default); every other `*_minor` column uses the row's own `currency`.
+fn currency_of<'a>(key: &str, row: &'a Map<String, Value>, opts: &'a Opts) -> Option<&'a str> {
+    if key.ends_with("_base_minor") {
+        return row
+            .get("base_currency")
+            .and_then(|v| v.as_str())
+            .or(opts.default_currency.as_deref());
+    }
     row.get("currency")
         .and_then(|v| v.as_str())
         .or(opts.default_currency.as_deref())
@@ -193,7 +219,7 @@ fn cell(key: &str, v: &Value, row: &Map<String, Value>, opts: &Opts, grouped: bo
         Value::Number(n) => {
             if is_minor(key) {
                 if let Some(i) = n.as_i64() {
-                    return match currency_of(row, opts) {
+                    return match currency_of(key, row, opts) {
                         Some(c) if grouped => format_grouped(i, c),
                         Some(c) => format_amount(i, decimals_for(c)),
                         None => i.to_string(),
@@ -454,8 +480,9 @@ fn text_value(v: &Value, opts: &Opts, style: Style, title: &str, out: &mut Strin
 
 // ---- csv -------------------------------------------------------------------
 
-/// An object that carries exactly one non-empty list of records (a report with
-/// its `rows`, a budget status with its `budgets`) exports as that list, with
+/// An object that carries one main list of records (a report with its `rows`,
+/// a budget status with its `budgets`; with several lists, the first of the
+/// conventional names above) exports as that list, with
 /// the object's scalar fields (period, currency, ...) repeated on every row so
 /// each row stands alone. Any other object exports as a single row.
 fn csv_rows_of_object(m: &Map<String, Value>) -> Vec<Map<String, Value>> {
@@ -466,10 +493,16 @@ fn csv_rows_of_object(m: &Map<String, Value>) -> Vec<Map<String, Value>> {
             _ => None,
         })
         .collect();
-    if lists.len() != 1 {
+    let chosen = if lists.len() == 1 {
+        Some(lists[0])
+    } else {
+        PREFERRED_LISTS
+            .iter()
+            .find_map(|name| lists.iter().find(|(k, _)| k.as_str() == *name).copied())
+    };
+    let Some((list_key, items)) = chosen else {
         return vec![m.clone()];
-    }
-    let (list_key, items) = lists[0];
+    };
     let scalars: Map<String, Value> = m
         .iter()
         .filter(|(k, v)| *k != list_key && !v.is_array() && !v.is_object())
@@ -696,6 +729,31 @@ mod tests {
         assert_eq!(v["schema"], "pext/v1");
         assert_eq!(v["ok"], true);
         assert_eq!(v["data"][0]["amount_minor"], -123456);
+    }
+
+    #[test]
+    fn base_columns_use_the_base_currency_and_native_columns_the_row_currency() {
+        let data = json!([{ "name": "Tokyo flat", "currency": "JPY", "value_minor": 5000000, "value_base_minor": 2850000 }]);
+        let opts = Opts {
+            default_currency: Some("INR".into()),
+            ..Opts::default()
+        };
+        let csv = render(Format::Csv, &data, &Map::new(), &opts).unwrap();
+        assert!(csv.contains("5000000"), "JPY has no decimals: {csv}");
+        assert!(csv.contains("28500.00"), "INR has two: {csv}");
+        let table = render(Format::Table, &data, &Map::new(), &opts).unwrap();
+        assert!(
+            table.contains("5,000,000") && table.contains("28,500.00"),
+            "{table}"
+        );
+    }
+
+    #[test]
+    fn csv_prefers_conventional_list_names_when_there_are_several() {
+        let data = json!({"currency": "INR", "groups": [{"group": "a"}], "items": [{"name": "x"}, {"name": "y"}]});
+        let out = render(Format::Csv, &data, &Map::new(), &Opts::default()).unwrap();
+        assert_eq!(out.lines().count(), 3, "{out}");
+        assert!(out.lines().next().unwrap().ends_with("name"), "{out}");
     }
 
     #[test]

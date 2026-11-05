@@ -4,11 +4,16 @@ use crate::registry::OpSpec;
 
 pub mod accounts;
 pub mod alerts;
+pub mod assets;
 pub mod budgets;
 pub mod categories;
 pub mod fx;
 pub mod goals;
 pub mod imports;
+pub mod invest;
+pub mod ious;
+pub mod loans;
+pub mod networth;
 pub mod query;
 pub mod recurring;
 pub mod reports;
@@ -28,6 +33,11 @@ pub fn all_ops() -> Vec<OpSpec> {
     v.extend(budgets::ops());
     v.extend(alerts::ops());
     v.extend(goals::ops());
+    v.extend(loans::ops());
+    v.extend(ious::ops());
+    v.extend(assets::ops());
+    v.extend(invest::ops());
+    v.extend(networth::ops());
     v.extend(reports::ops());
     v.extend(recurring::ops());
     v.extend(subs::ops());

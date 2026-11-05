@@ -6,7 +6,7 @@ use rusqlite::Connection;
 use std::path::Path;
 
 /// Migration scripts, applied in order. `PRAGMA user_version` records progress.
-pub const MIGRATIONS: &[&str] = &[M1, M2];
+pub const MIGRATIONS: &[&str] = &[M1, M2, M3];
 
 pub fn latest_version() -> i64 {
     MIGRATIONS.len() as i64
@@ -320,5 +320,103 @@ CREATE TABLE alert_settings(
   account_id INTEGER NOT NULL REFERENCES accounts(id),
   threshold_minor INTEGER NOT NULL CHECK(abs(threshold_minor) <= 10000000000000),
   UNIQUE(kind, account_id)
+);
+"#;
+
+const M3: &str = r#"
+CREATE TABLE loans(
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK(length(name) BETWEEN 1 AND 64),
+  kind TEXT NOT NULL CHECK(kind IN ('home','car','personal','education','business','other')),
+  currency TEXT NOT NULL CHECK(length(currency)=3),
+  principal_minor INTEGER NOT NULL CHECK(principal_minor > 0 AND principal_minor <= 10000000000000),
+  rate_milli INTEGER NOT NULL CHECK(rate_milli BETWEEN 0 AND 50000),
+  months INTEGER NOT NULL CHECK(months BETWEEN 1 AND 480),
+  start_date TEXT NOT NULL,
+  emi_minor INTEGER NOT NULL CHECK(emi_minor > 0),
+  account_id INTEGER REFERENCES accounts(id),
+  lender TEXT NOT NULL DEFAULT '',
+  archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0,1)),
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE ious(
+  id INTEGER PRIMARY KEY,
+  person TEXT NOT NULL CHECK(length(person) BETWEEN 1 AND 64),
+  direction TEXT NOT NULL CHECK(direction IN ('lent','borrowed')),
+  amount_minor INTEGER NOT NULL CHECK(amount_minor > 0 AND amount_minor <= 10000000000000),
+  settled_minor INTEGER NOT NULL DEFAULT 0 CHECK(settled_minor >= 0 AND settled_minor <= amount_minor),
+  currency TEXT NOT NULL CHECK(length(currency)=3),
+  date TEXT NOT NULL,
+  due_date TEXT,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE instruments(
+  id INTEGER PRIMARY KEY,
+  symbol TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK(length(symbol) BETWEEN 1 AND 32),
+  name TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL CHECK(kind IN ('stock','etf','mutual_fund','bond','crypto','gold','fd','other')),
+  currency TEXT NOT NULL CHECK(length(currency)=3),
+  archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0,1)),
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE trades(
+  id INTEGER PRIMARY KEY,
+  instrument_id INTEGER NOT NULL REFERENCES instruments(id),
+  date TEXT NOT NULL,
+  side TEXT NOT NULL CHECK(side IN ('buy','sell','dividend')),
+  qty_e8 INTEGER NOT NULL CHECK(qty_e8 >= 0 AND qty_e8 <= 10000000000000000),
+  price_e8 INTEGER NOT NULL CHECK(price_e8 >= 0 AND price_e8 <= 10000000000000000),
+  fee_minor INTEGER NOT NULL DEFAULT 0 CHECK(fee_minor >= 0 AND fee_minor <= 10000000000000),
+  amount_minor INTEGER NOT NULL CHECK(amount_minor >= 0 AND amount_minor <= 10000000000000),
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX trades_by_instrument ON trades(instrument_id, date);
+
+CREATE TABLE prices(
+  id INTEGER PRIMARY KEY,
+  instrument_id INTEGER NOT NULL REFERENCES instruments(id),
+  date TEXT NOT NULL,
+  price_e8 INTEGER NOT NULL CHECK(price_e8 > 0 AND price_e8 <= 10000000000000000),
+  UNIQUE(instrument_id, date)
+);
+
+CREATE TABLE alloc_targets(
+  id INTEGER PRIMARY KEY,
+  class TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  target_bp INTEGER NOT NULL CHECK(target_bp BETWEEN 0 AND 10000)
+);
+
+CREATE TABLE assets(
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK(length(name) BETWEEN 1 AND 64),
+  kind TEXT NOT NULL CHECK(kind IN ('property','vehicle','gold','retirement','jewellery','collectible','business','other')),
+  currency TEXT NOT NULL CHECK(length(currency)=3),
+  archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0,1)),
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE asset_values(
+  id INTEGER PRIMARY KEY,
+  asset_id INTEGER NOT NULL REFERENCES assets(id),
+  date TEXT NOT NULL,
+  value_minor INTEGER NOT NULL CHECK(value_minor >= 0 AND value_minor <= 10000000000000),
+  note TEXT NOT NULL DEFAULT '',
+  UNIQUE(asset_id, date)
+);
+
+CREATE TABLE snapshots(
+  id INTEGER PRIMARY KEY,
+  date TEXT NOT NULL UNIQUE,
+  currency TEXT NOT NULL CHECK(length(currency)=3),
+  assets_minor INTEGER NOT NULL,
+  liabilities_minor INTEGER NOT NULL,
+  net_worth_minor INTEGER NOT NULL,
+  detail TEXT NOT NULL,
+  created_at TEXT NOT NULL
 );
 "#;

@@ -256,6 +256,13 @@ fn doctor(ctx: &Ctx, _a: &Args) -> Result<Value> {
         json!({ "checked": ids.len(), "violations": bad }),
     );
 
+    let broken = crate::ops::invest::broken_positions(ctx)?;
+    add(
+        "investment_positions",
+        broken.is_empty(),
+        json!({ "violations": broken }),
+    );
+
     let orphan_splits = ctx.one_i64(
         "SELECT COUNT(*) FROM splits s LEFT JOIN transactions t ON t.id=s.txn_id WHERE t.id IS NULL",
         &[],
