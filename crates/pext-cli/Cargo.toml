@@ -1,0 +1,25 @@
+[package]
+name = "pext-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "pext: an agent-friendly personal finance engine"
+
+[[bin]]
+name = "pext"
+path = "src/main.rs"
+
+[lib]
+name = "pext_cli"
+path = "src/lib.rs"
+
+[dependencies]
+pext-core = { path = "../pext-core" }
+pext-engine = { path = "../pext-engine" }
+pext-render = { path = "../pext-render" }
+clap = { version = "4", features = ["string", "env"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+
+[dev-dependencies]
+tempfile = "3"

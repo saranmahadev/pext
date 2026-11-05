@@ -1,0 +1,12 @@
+[package]
+name = "pext-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pext-core = { path = "../pext-core" }
+serde_json = { version = "1", features = ["preserve_order"] }
+csv = "1"
+
+[dev-dependencies]

@@ -1,0 +1,19 @@
+[package]
+name = "pext-engine"
+description = "pext engine: SQLite store, audit/undo, operation registry and all finance services."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+csv = "1.4.0"
+pext-core = { path = "../pext-core" }
+regex = "1.13.1"
+rusqlite = { version = "0.41.1", features = ["bundled"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+sha2 = "0.11.1"
+
+[dev-dependencies]
+proptest = "1.12.0"
+tempfile = "3.27.0"

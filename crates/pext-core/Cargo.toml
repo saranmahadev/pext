@@ -1,0 +1,13 @@
+[package]
+name = "pext-core"
+description = "Pure domain logic for pext: exact money math, dates, query model. No I/O."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+
+[dev-dependencies]
+proptest = "1.12.0"
