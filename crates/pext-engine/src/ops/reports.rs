@@ -154,7 +154,13 @@ fn filter_arg(ctx: &Ctx, a: &Args) -> Result<Query> {
     Ok(q)
 }
 
-fn ranked(rows: &[Row], flow: Flow, key: impl Fn(&Row) -> Vec<String>, top: usize) -> Vec<Value> {
+fn ranked(
+    rows: &[Row],
+    flow: Flow,
+    key: impl Fn(&Row) -> Vec<String>,
+    top: usize,
+    label: &str,
+) -> Vec<Value> {
     let mut m: BTreeMap<String, (i128, usize)> = BTreeMap::new();
     for r in rows.iter().filter(|r| r.flow == flow) {
         for k in key(r) {
@@ -168,7 +174,7 @@ fn ranked(rows: &[Row], flow: Flow, key: impl Fn(&Row) -> Vec<String>, top: usiz
     v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     v.into_iter()
         .take(top)
-        .map(|(k, s, n)| json!({ "name": k, "amount_minor": s as i64, "share_pct": pct(s as i64, total as i64), "count": n }))
+        .map(|(k, s, n)| json!({ label: k, "amount_minor": s as i64, "share_pct": pct(s as i64, total as i64), "count": n }))
         .collect()
 }
 
@@ -214,8 +220,8 @@ fn summary(ctx: &Ctx, a: &Args) -> Result<Value> {
             "income_change_minor": income - pinc, "expense_change_minor": expense - pexp,
             "expense_change_pct": pct(expense - pexp, pexp),
         },
-        "top_categories": ranked(&d.rows, Flow::Expense, cat_key, 5),
-        "top_payees": ranked(&d.rows, Flow::Expense, payee_key, 5),
+        "top_categories": ranked(&d.rows, Flow::Expense, cat_key, 5, "name"),
+        "top_payees": ranked(&d.rows, Flow::Expense, payee_key, 5, "payee"),
         "largest_expenses": biggest.iter().take(5).map(|r| json!({
             "txn_id": r.line.txn_id, "date": fmt_date(r.line.date), "payee": r.line.payee,
             "category": r.line.category, "amount_minor": r.amount(),
@@ -252,9 +258,10 @@ fn spending(ctx: &Ctx, a: &Args) -> Result<Value> {
                 }
             },
             top,
+            "name",
         ),
-        "payee" => ranked(&d.rows, flow, payee_key, top),
-        "account" => ranked(&d.rows, flow, |r| vec![r.line.account.clone()], top),
+        "payee" => ranked(&d.rows, flow, payee_key, top, "payee"),
+        "account" => ranked(&d.rows, flow, |r| vec![r.line.account.clone()], top, "name"),
         "tag" => ranked(
             &d.rows,
             flow,
@@ -266,12 +273,14 @@ fn spending(ctx: &Ctx, a: &Args) -> Result<Value> {
                 }
             },
             top,
+            "name",
         ),
         "month" => ranked(
             &d.rows,
             flow,
             |r| vec![pext_core::dates::ym(r.line.date)],
             top,
+            "name",
         ),
         _ => unreachable!("validated by choices"),
     };
@@ -339,12 +348,12 @@ fn compare(ctx: &Ctx, a: &Args) -> Result<Value> {
         }]
     };
     let mut m: BTreeMap<String, (i64, i64)> = BTreeMap::new();
-    for v in ranked(&da.rows, Flow::Expense, key, usize::MAX) {
+    for v in ranked(&da.rows, Flow::Expense, key, usize::MAX, "name") {
         m.entry(v["name"].as_str().unwrap_or("").into())
             .or_default()
             .0 = v["amount_minor"].as_i64().unwrap_or(0);
     }
-    for v in ranked(&db.rows, Flow::Expense, key, usize::MAX) {
+    for v in ranked(&db.rows, Flow::Expense, key, usize::MAX, "name") {
         m.entry(v["name"].as_str().unwrap_or("").into())
             .or_default()
             .1 = v["amount_minor"].as_i64().unwrap_or(0);

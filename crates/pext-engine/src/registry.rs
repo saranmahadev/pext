@@ -117,6 +117,10 @@ pub struct OpSpec {
     pub creates_db: bool,
     /// Usable by tokens restricted to specific accounts.
     pub scoped_ok: bool,
+    /// Handler manages its own files; no transaction or audit entry.
+    pub file_op: bool,
+    /// Never exposed through the MCP or HTTP servers.
+    pub local_only: bool,
     pub params: Vec<Param>,
     pub examples: Vec<&'static str>,
     pub handler: Handler,
@@ -132,6 +136,8 @@ impl OpSpec {
             needs_db: true,
             creates_db: false,
             scoped_ok: false,
+            file_op: false,
+            local_only: false,
             params: vec![],
             examples: vec![],
             handler,
@@ -162,6 +168,15 @@ impl OpSpec {
     }
     pub fn creates(mut self) -> Self {
         self.creates_db = true;
+        self
+    }
+    pub fn file_op(mut self) -> Self {
+        self.file_op = true;
+        self.needs_db = false;
+        self
+    }
+    pub fn local(mut self) -> Self {
+        self.local_only = true;
         self
     }
     pub fn scoped(mut self) -> Self {
@@ -416,6 +431,7 @@ pub fn describe(spec: &OpSpec) -> Value {
         "access": match spec.access { Role::Read => "read", Role::Append => "append", Role::Write => "write", Role::Admin => "full" },
         "mutating": spec.mutating,
         "scoped_ok": spec.scoped_ok,
+        "local_only": spec.local_only,
         "params": spec.params.iter().map(|p| json!({
             "name": p.name, "flag": format!("--{}", p.name.replace('_', "-")), "type": p.kind.name(),
             "required": p.required, "multiple": p.multi, "positional": p.positional,

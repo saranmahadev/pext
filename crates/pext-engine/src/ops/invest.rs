@@ -55,7 +55,7 @@ pub fn load_instruments(ctx: &Ctx, include_archived: bool) -> Result<Vec<Instrum
         .collect())
 }
 
-fn find(ctx: &Ctx, r: &str) -> Result<Instrument> {
+pub fn find(ctx: &Ctx, r: &str) -> Result<Instrument> {
     let want = r.trim();
     load_instruments(ctx, true)?
         .into_iter()
@@ -450,6 +450,21 @@ fn price_set(ctx: &Ctx, a: &Args) -> Result<Value> {
         );
     }
     let date = a.opt_date("date")?.unwrap_or(ctx.today);
+    upsert_price(ctx, &inst, date, price)
+}
+
+/// Insert or replace one daily price (validated: positive, not in the future).
+pub fn upsert_price(
+    ctx: &Ctx,
+    inst: &Instrument,
+    date: chrono::NaiveDate,
+    price: i64,
+) -> Result<Value> {
+    if price <= 0 {
+        return Err(
+            Error::validation("invalid_price", "the price must be positive").with_field("price"),
+        );
+    }
     if date > ctx.today {
         return Err(
             Error::validation("date_in_future", "prices cannot be dated in the future")

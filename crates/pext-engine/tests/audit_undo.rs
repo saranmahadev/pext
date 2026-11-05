@@ -205,6 +205,7 @@ fn roles_are_enforced() {
         accounts: None,
         authenticated: true,
         token_id: None,
+        redact: false,
     };
     let append = Actor {
         name: "bot".into(),
@@ -212,6 +213,7 @@ fn roles_are_enforced() {
         accounts: None,
         authenticated: true,
         token_id: None,
+        redact: false,
     };
     let o = CallOpts::default();
     assert!(h.raw("txn.list", json!({}), &o, &read).is_ok());
@@ -265,6 +267,7 @@ fn account_scoped_actors_are_confined() {
         accounts: Some(vec![a]),
         authenticated: true,
         token_id: None,
+        redact: false,
     };
     let o = CallOpts::default();
     assert!(h
@@ -319,6 +322,7 @@ fn require_token_blocks_unauthenticated_calls() {
         accounts: None,
         authenticated: true,
         token_id: None,
+        redact: false,
     };
     assert!(h
         .raw("acct.list", json!({}), &CallOpts::default(), &auth)

@@ -90,7 +90,7 @@ fn spending_breakdowns() {
     assert_eq!(find(&r["rows"], "food")["amount_minor"], 180_000);
     assert_eq!(find(&r["rows"], "transport")["amount_minor"], 50_000);
     let r = h.ok("report.spending", json!({"by": "payee"}));
-    assert_eq!(r["rows"][0]["name"], "(none)");
+    assert_eq!(r["rows"][0]["payee"], "(none)");
     let r = h.ok("report.spending", json!({"by": "account"}));
     assert_eq!(r["rows"].as_array().unwrap().len(), 1);
     let r = h.ok(

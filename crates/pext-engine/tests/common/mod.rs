@@ -32,6 +32,8 @@ impl H {
         let dir = TempDir::new().unwrap();
         let mut cfg = EngineConfig::new(dir.path().join("t.db"));
         cfg.today = Some(d);
+        cfg.kdf = pext_engine::crypto::KdfParams::insecure_fast();
+        cfg.passphrase = Some(pext_engine::crypto::Secret("correct horse battery".into()));
         H {
             dir,
             e: Engine::new(cfg),
@@ -54,6 +56,20 @@ impl H {
             _ => Map::new(),
         };
         Engine::new(cfg).call(op, m, &CallOpts::default(), &Actor::owner())
+    }
+
+    /// Create a token as the owner and return (secret, actor).
+    pub fn token(&self, args: Value) -> (String, Actor) {
+        let secret = self.ok("token.create", args)["token"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let actor = self.e.authenticate(&secret).unwrap();
+        (secret, actor)
+    }
+
+    pub fn as_actor(&self, actor: &Actor, op: &str, args: Value) -> Result<Output, Error> {
+        self.raw(op, args, &CallOpts::default(), actor)
     }
 
     pub fn path(&self) -> std::path::PathBuf {

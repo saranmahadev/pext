@@ -25,6 +25,10 @@ pub struct Env {
     pub token: Option<String>,
     pub output: Option<String>,
     pub today: Option<String>,
+    /// Passphrase for backups and sync (env PEXT_PASSPHRASE).
+    pub passphrase: Option<String>,
+    /// Use weak key derivation. Tests only.
+    pub kdf_fast: bool,
 }
 
 impl Env {
@@ -40,6 +44,8 @@ impl Env {
             token: var("PEXT_TOKEN"),
             output: var("PEXT_OUTPUT"),
             today: var("PEXT_TODAY"),
+            passphrase: var("PEXT_PASSPHRASE"),
+            kdf_fast: false,
         }
     }
 }
@@ -57,6 +63,9 @@ const GLOBALS: &[&str] = &[
     "token",
     "out",
     "watch",
+    "redact",
+    "private",
+    "passphrase_file",
     "help",
     "version",
 ];
@@ -184,11 +193,40 @@ pub fn build_cli() -> Command {
         .arg(Arg::new("idempotency_key").long("idempotency-key").global(true).help("make a write safe to retry"))
         .arg(Arg::new("token").long("token").global(true).help("access token (env PEXT_TOKEN)"))
         .arg(Arg::new("out").long("out").global(true).help("write the output to this file"))
-        .arg(Arg::new("watch").long("watch").global(true).help("re-run a read command every N seconds"));
+        .arg(Arg::new("watch").long("watch").global(true).help("re-run a read command every N seconds"))
+        .arg(Arg::new("redact").long("redact").global(true).action(ArgAction::SetTrue).help("mask payees, memos and notes in the output"))
+        .arg(Arg::new("private").long("private").global(true).action(ArgAction::SetTrue).help("hide all amounts (for screenshots)"))
+        .arg(Arg::new("passphrase_file").long("passphrase-file").global(true).help("file holding the backup/sync passphrase (env PEXT_PASSPHRASE)"));
     for (child, n) in &tree.children {
         cmd = cmd.subcommand(node_command(child, child, n));
     }
-    cmd
+    cmd.subcommand(
+        Command::new("completions")
+            .about("Print a shell completion script (bash, zsh, fish, powershell, elvish)")
+            .arg(Arg::new("shell").required(true).value_parser([
+                "bash",
+                "zsh",
+                "fish",
+                "powershell",
+                "elvish",
+            ])),
+    )
+}
+
+fn completions(m: &ArgMatches, out: &mut dyn Write) -> i32 {
+    use clap_complete::{generate, Shell};
+    let shell = match m.get_one::<String>("shell").map(String::as_str) {
+        Some("bash") => Shell::Bash,
+        Some("zsh") => Shell::Zsh,
+        Some("fish") => Shell::Fish,
+        Some("powershell") => Shell::PowerShell,
+        _ => Shell::Elvish,
+    };
+    let mut cmd = build_cli();
+    let mut buf: Vec<u8> = Vec::new();
+    generate(shell, &mut cmd, "pext", &mut buf);
+    let _ = out.write_all(&buf);
+    0
 }
 
 // ---- argument extraction -----------------------------------------------------
@@ -335,6 +373,9 @@ where
             return emit_error(&er, peeked, argv.iter().any(|a| a == "--pretty"), out, err);
         }
     };
+    if let Some(("completions", sub)) = matches.subcommand() {
+        return completions(sub, out);
+    }
     let pretty = matches.get_flag("pretty");
     let format = match matches.get_one::<String>("output") {
         Some(s) => match Format::parse(s) {
@@ -372,17 +413,25 @@ fn execute(
         Some(t) => Some(parse_today(t)?),
         None => None,
     };
-    let cfg = EngineConfig {
-        db_path: db_path(env, m.get_one::<String>("db")),
-        today,
-        plugin_dir: None,
+    let mut cfg = EngineConfig::new(db_path(env, m.get_one::<String>("db")));
+    cfg.today = today;
+    cfg.passphrase = match m.get_one::<String>("passphrase_file") {
+        Some(f) => Some(pext_engine::crypto::Secret(read_passphrase_file(f)?)),
+        None => env.passphrase.clone().map(pext_engine::crypto::Secret),
     };
+    if env.kdf_fast {
+        cfg.kdf = pext_engine::crypto::KdfParams::insecure_fast();
+    }
     let engine = Engine::new(cfg);
     let token = m
         .get_one::<String>("token")
         .cloned()
         .or_else(|| env.token.clone());
-    let actor = resolve_actor(&engine, token.as_deref())?;
+    let mut actor = resolve_actor(&engine, token.as_deref())?;
+    if m.get_flag("redact") {
+        actor.redact = true;
+    }
+    let private = m.get_flag("private");
     let opts = CallOpts {
         dry_run: m.get_flag("dry_run"),
         yes: m.get_flag("yes"),
@@ -423,7 +472,10 @@ fn execute(
     };
 
     loop {
-        let output = engine.call(&op.name_owned(), raw.clone(), &opts, &actor)?;
+        let mut output = engine.call(&op.name_owned(), raw.clone(), &opts, &actor)?;
+        if private {
+            mask_money(&mut output.data);
+        }
         let base = default_currency(&engine, &actor);
         let ropts = Opts {
             fields: fields.clone(),
@@ -492,16 +544,47 @@ fn write_file(path: &str, text: &str) -> Result<()> {
         .map_err(|e| Error::io("write_failed", format!("cannot write {path}: {e}")))
 }
 
-/// Resolve who is calling. Token support is wired up with the access-control
-/// phase; until then a token can only be rejected clearly.
-fn resolve_actor(_engine: &Engine, token: Option<&str>) -> Result<Actor> {
+/// Resolve who is calling: the local owner, or the holder of a token.
+fn resolve_actor(engine: &Engine, token: Option<&str>) -> Result<Actor> {
     match token {
         None => Ok(Actor::owner()),
-        Some(_) => Err(Error::auth(
-            "tokens_unavailable",
-            "access tokens are not available in this build",
-        )),
+        Some(t) => engine.authenticate(t),
     }
+}
+
+/// `--private`: replace every money amount with `***`.
+fn mask_money(v: &mut Value) {
+    match v {
+        Value::Object(m) => {
+            for (k, val) in m.iter_mut() {
+                if k.ends_with("_minor") && val.is_number() {
+                    *val = Value::String("***".into());
+                } else {
+                    mask_money(val);
+                }
+            }
+        }
+        Value::Array(a) => a.iter_mut().for_each(mask_money),
+        _ => {}
+    }
+}
+
+fn read_passphrase_file(path: &str) -> Result<String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| Error::io("passphrase_file", format!("cannot read {path}: {e}")))?;
+    let line = text
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('\r')
+        .to_string();
+    if line.is_empty() {
+        return Err(Error::validation(
+            "passphrase_file",
+            format!("{path} is empty"),
+        ));
+    }
+    Ok(line)
 }
 
 fn default_currency(engine: &Engine, actor: &Actor) -> Option<String> {

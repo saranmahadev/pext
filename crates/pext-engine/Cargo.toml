@@ -6,13 +6,17 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+argon2 = "0.6.0"
+chacha20poly1305 = "0.11.0"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 csv = "1.4.0"
+getrandom = "0.4.3"
 pext-core = { path = "../pext-core" }
 regex = "1.13.1"
 rusqlite = { version = "0.41.1", features = ["bundled"] }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 sha2 = "0.11.1"
+libc = "0.2"
 
 [dev-dependencies]
 proptest = "1.12.0"

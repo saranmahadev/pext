@@ -7,6 +7,7 @@
 
 pub mod args;
 pub mod audit;
+pub mod crypto;
 pub mod ctx;
 pub mod db;
 pub mod invariants;
@@ -22,12 +23,20 @@ use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde_json::{json, Map, Value};
 use std::path::PathBuf;
 
+/// Command groups that echo raw user text (rules, views, import profiles,
+/// audit arguments); redacting actors may not run them.
+pub const REDACT_BLOCKED: &[&str] = &["audit", "rule", "view", "payee", "import", "undo"];
+
 #[derive(Clone, Debug)]
 pub struct EngineConfig {
     pub db_path: PathBuf,
     /// Override "today" (tests, scripted runs).
     pub today: Option<NaiveDate>,
     pub plugin_dir: Option<PathBuf>,
+    /// Passphrase for backups, restore and sync (never logged or printed).
+    pub passphrase: Option<crypto::Secret>,
+    /// Key-derivation cost; tests lower it.
+    pub kdf: crypto::KdfParams,
 }
 
 impl EngineConfig {
@@ -36,6 +45,8 @@ impl EngineConfig {
             db_path: db_path.into(),
             today: None,
             plugin_dir: None,
+            passphrase: None,
+            kdf: crypto::KdfParams::default(),
         }
     }
 }
@@ -68,12 +79,53 @@ impl Engine {
             .unwrap_or_else(|| chrono::Local::now().date_naive())
     }
 
+    fn require_token_if_set(&self, actor: &Actor) -> Result<()> {
+        if actor.authenticated || !self.cfg.db_path.exists() {
+            return Ok(());
+        }
+        let conn = db::open_readonly(&self.cfg.db_path)?;
+        let req: Option<String> = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key='require_token'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .db()?;
+        if req.as_deref() == Some("true") {
+            return Err(
+                Error::auth("token_required", "this database requires an access token")
+                    .with_hint("pass --token or set PEXT_TOKEN"),
+            );
+        }
+        Ok(())
+    }
+
     fn now(&self) -> String {
         chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
     }
 
-    /// Run an operation by name.
+    /// Resolve an access token to the actor it grants.
+    pub fn authenticate(&self, token: &str) -> Result<Actor> {
+        ops::access::authenticate(&self.cfg, token, self.today())
+    }
+
+    /// Run an operation by name. Output is redacted for redacting actors.
     pub fn call(
+        &self,
+        op: &str,
+        raw: Map<String, Value>,
+        opts: &CallOpts,
+        actor: &Actor,
+    ) -> Result<Output> {
+        let mut out = self.call_inner(op, raw, opts, actor)?;
+        if actor.redact {
+            ops::access::redact(&mut out.data);
+        }
+        Ok(out)
+    }
+
+    fn call_inner(
         &self,
         op: &str,
         raw: Map<String, Value>,
@@ -95,6 +147,19 @@ impl Engine {
                 ),
             ));
         }
+        if actor.redact
+            && REDACT_BLOCKED
+                .iter()
+                .any(|g| spec.name == *g || spec.name.starts_with(&format!("{g}.")))
+        {
+            return Err(Error::auth(
+                "redaction_blocks_command",
+                format!(
+                    "'{}' would expose raw text that redaction cannot mask",
+                    spec.name
+                ),
+            ));
+        }
         if actor.accounts.is_some() && !spec.scoped_ok {
             return Err(Error::auth(
                 "scope_denied",
@@ -106,7 +171,16 @@ impl Engine {
         if opts.yes {
             args.map.insert("yes".into(), json!(true));
         }
+        if opts.dry_run && spec.file_op {
+            args.map.insert("dry_run".into(), json!(true));
+        }
         if let Some(k) = &opts.idempotency_key {
+            if spec.name == "token.create" {
+                return Err(Error::usage(
+                    "idempotency_not_applicable",
+                    "token creation cannot use an idempotency key: the result contains a secret that must not be stored",
+                ));
+            }
             if !spec.mutating {
                 return Err(Error::usage(
                     "idempotency_not_applicable",
@@ -120,6 +194,16 @@ impl Engine {
                 )
                 .with_field("idempotency_key"));
             }
+        }
+
+        if spec.file_op {
+            // Manages its own files: not wrapped in a transaction or audited, but
+            // still subject to the token requirement.
+            self.require_token_if_set(actor)?;
+            let conn = Connection::open_in_memory().db()?;
+            let ctx = Ctx::new(&conn, &self.cfg, today, self.now(), actor.clone());
+            let data = (spec.handler)(&ctx, &args)?;
+            return Ok(assemble(data, Map::new(), &ctx));
         }
 
         if !spec.needs_db {

@@ -6,7 +6,7 @@ use rusqlite::Connection;
 use std::path::Path;
 
 /// Migration scripts, applied in order. `PRAGMA user_version` records progress.
-pub const MIGRATIONS: &[&str] = &[M1, M2, M3];
+pub const MIGRATIONS: &[&str] = &[M1, M2, M3, M4];
 
 pub fn latest_version() -> i64 {
     MIGRATIONS.len() as i64
@@ -417,6 +417,32 @@ CREATE TABLE snapshots(
   liabilities_minor INTEGER NOT NULL,
   net_worth_minor INTEGER NOT NULL,
   detail TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+"#;
+
+const M4: &str = r#"
+CREATE TABLE tokens(
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK(length(name) BETWEEN 1 AND 64),
+  secret_hash TEXT NOT NULL UNIQUE,
+  prefix TEXT NOT NULL,
+  role TEXT NOT NULL CHECK(role IN ('read','append','write','full')),
+  accounts TEXT,
+  redact INTEGER NOT NULL DEFAULT 0 CHECK(redact IN (0,1)),
+  expires_at TEXT,
+  revoked_at TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE plugins(
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK(length(name) BETWEEN 1 AND 64),
+  version TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL CHECK(kind IN ('importer','price_feed','exporter','other')),
+  command TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  permissions TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
 "#;

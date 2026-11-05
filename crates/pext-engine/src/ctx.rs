@@ -46,6 +46,8 @@ pub struct Actor {
     pub accounts: Option<Vec<i64>>,
     pub authenticated: bool,
     pub token_id: Option<i64>,
+    /// Mask payees, memos and notes in everything this actor reads.
+    pub redact: bool,
 }
 
 impl Actor {
@@ -57,6 +59,7 @@ impl Actor {
             accounts: None,
             authenticated: false,
             token_id: None,
+            redact: false,
         }
     }
 }

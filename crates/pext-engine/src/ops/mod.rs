@@ -2,9 +2,11 @@
 
 use crate::registry::OpSpec;
 
+pub mod access;
 pub mod accounts;
 pub mod alerts;
 pub mod assets;
+pub mod backup;
 pub mod budgets;
 pub mod categories;
 pub mod fx;
@@ -14,11 +16,13 @@ pub mod invest;
 pub mod ious;
 pub mod loans;
 pub mod networth;
+pub mod plugins;
 pub mod query;
 pub mod recurring;
 pub mod reports;
 pub mod rules;
 pub mod subs;
+pub mod sync;
 pub mod system;
 pub mod txns;
 
@@ -38,6 +42,10 @@ pub fn all_ops() -> Vec<OpSpec> {
     v.extend(assets::ops());
     v.extend(invest::ops());
     v.extend(networth::ops());
+    v.extend(access::ops());
+    v.extend(backup::ops());
+    v.extend(sync::ops());
+    v.extend(plugins::ops());
     v.extend(reports::ops());
     v.extend(recurring::ops());
     v.extend(subs::ops());
