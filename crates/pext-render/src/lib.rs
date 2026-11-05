@@ -454,10 +454,44 @@ fn text_value(v: &Value, opts: &Opts, style: Style, title: &str, out: &mut Strin
 
 // ---- csv -------------------------------------------------------------------
 
+/// An object that carries exactly one non-empty list of records (a report with
+/// its `rows`, a budget status with its `budgets`) exports as that list, with
+/// the object's scalar fields (period, currency, ...) repeated on every row so
+/// each row stands alone. Any other object exports as a single row.
+fn csv_rows_of_object(m: &Map<String, Value>) -> Vec<Map<String, Value>> {
+    let lists: Vec<(&String, &Vec<Value>)> = m
+        .iter()
+        .filter_map(|(k, v)| match v {
+            Value::Array(a) if !a.is_empty() && a.iter().all(|x| x.is_object()) => Some((k, a)),
+            _ => None,
+        })
+        .collect();
+    if lists.len() != 1 {
+        return vec![m.clone()];
+    }
+    let (list_key, items) = lists[0];
+    let scalars: Map<String, Value> = m
+        .iter()
+        .filter(|(k, v)| *k != list_key && !v.is_array() && !v.is_object())
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    items
+        .iter()
+        .filter_map(|x| x.as_object())
+        .map(|row| {
+            let mut out = scalars.clone();
+            for (k, v) in row {
+                out.insert(k.clone(), v.clone());
+            }
+            out
+        })
+        .collect()
+}
+
 fn csv_out(data: &Value, opts: &Opts) -> Result<String> {
     let owned: Vec<Map<String, Value>> = match data {
         Value::Array(a) => a.iter().filter_map(|x| x.as_object().cloned()).collect(),
-        Value::Object(m) => vec![m.clone()],
+        Value::Object(m) => csv_rows_of_object(m),
         other => {
             return Ok(match other {
                 Value::String(s) => s.clone(),
@@ -662,6 +696,44 @@ mod tests {
         assert_eq!(v["schema"], "pext/v1");
         assert_eq!(v["ok"], true);
         assert_eq!(v["data"][0]["amount_minor"], -123456);
+    }
+
+    #[test]
+    fn csv_flattens_report_shaped_objects() {
+        let data = json!({
+            "period_start": "2026-11-01", "currency": "INR", "total_minor": 230000,
+            "rows": [
+                {"name": "food", "amount_minor": 180000},
+                {"name": "=cmd()", "amount_minor": 50000}
+            ]
+        });
+        let out = render(Format::Csv, &data, &Map::new(), &Opts::default()).unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 3, "{out}");
+        assert!(lines[0].starts_with("period_start,currency,total"), "{out}");
+        assert!(
+            lines[1].contains("2026-11-01,INR,2300.00,food,1800.00"),
+            "{out}"
+        );
+        assert!(lines[2].contains("'=cmd()"), "formula neutralised: {out}");
+        // two lists: no obvious rows, so the object stays one row
+        let two = json!({"a": [{"x": 1}], "b": [{"y": 2}], "n": 3});
+        assert_eq!(
+            render(Format::Csv, &two, &Map::new(), &Opts::default())
+                .unwrap()
+                .lines()
+                .count(),
+            2
+        );
+        // an empty list falls back to the single-row form
+        let none = json!({"n": 3, "rows": []});
+        assert_eq!(
+            render(Format::Csv, &none, &Map::new(), &Opts::default())
+                .unwrap()
+                .lines()
+                .count(),
+            2
+        );
     }
 
     #[test]

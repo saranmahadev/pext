@@ -5,6 +5,7 @@
 pub mod dates;
 pub mod error;
 pub mod money;
+pub mod qlang;
 pub mod query;
 
 pub use error::{Error, ErrorKind, Result};

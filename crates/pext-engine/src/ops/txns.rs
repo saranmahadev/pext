@@ -313,6 +313,7 @@ fn add(ctx: &Ctx, a: &Args) -> Result<Value> {
                 payee: &payee,
                 memo: &memo,
                 amount_minor: amount,
+                date,
             },
         )?;
         if let Some(p) = r.payee {

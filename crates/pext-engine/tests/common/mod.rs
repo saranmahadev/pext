@@ -25,13 +25,35 @@ impl H {
     }
 
     pub fn bare() -> H {
+        H::bare_on(today())
+    }
+
+    pub fn bare_on(d: NaiveDate) -> H {
         let dir = TempDir::new().unwrap();
         let mut cfg = EngineConfig::new(dir.path().join("t.db"));
-        cfg.today = Some(today());
+        cfg.today = Some(d);
         H {
             dir,
             e: Engine::new(cfg),
         }
+    }
+
+    /// Initialised database where "today" is the given YYYY-MM-DD.
+    pub fn on(date: &str) -> H {
+        let h = H::bare_on(NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap());
+        h.ok("init", json!({}));
+        h
+    }
+
+    /// Run an op as if "today" were a different date.
+    pub fn call_on(&self, date: &str, op: &str, args: Value) -> Result<Output, Error> {
+        let mut cfg = self.e.cfg.clone();
+        cfg.today = Some(NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap());
+        let m = match args {
+            Value::Object(m) => m,
+            _ => Map::new(),
+        };
+        Engine::new(cfg).call(op, m, &CallOpts::default(), &Actor::owner())
     }
 
     pub fn path(&self) -> std::path::PathBuf {

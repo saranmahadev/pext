@@ -6,7 +6,7 @@ use rusqlite::Connection;
 use std::path::Path;
 
 /// Migration scripts, applied in order. `PRAGMA user_version` records progress.
-pub const MIGRATIONS: &[&str] = &[M1];
+pub const MIGRATIONS: &[&str] = &[M1, M2];
 
 pub fn latest_version() -> i64 {
     MIGRATIONS.len() as i64
@@ -226,5 +226,99 @@ CREATE TABLE idempotency(
   result TEXT NOT NULL,
   audit_id INTEGER,
   created_at TEXT NOT NULL
+);
+"#;
+
+/// Phase 2: exchange rates, saved views, rules, budgets, recurring items, goals, alert settings.
+const M2: &str = r#"
+CREATE TABLE fx_rates(
+  id INTEGER PRIMARY KEY,
+  base TEXT NOT NULL CHECK(length(base)=3),
+  quote TEXT NOT NULL CHECK(length(quote)=3),
+  date TEXT NOT NULL,
+  rate_e8 INTEGER NOT NULL CHECK(rate_e8 > 0 AND rate_e8 <= 100000000000000000),
+  source TEXT NOT NULL DEFAULT 'manual',
+  CHECK(base != quote),
+  UNIQUE(base, quote, date)
+);
+
+CREATE TABLE saved_views(
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK(length(name) BETWEEN 1 AND 64),
+  query TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE rules(
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK(length(name) BETWEEN 1 AND 64),
+  priority INTEGER NOT NULL DEFAULT 100,
+  query TEXT NOT NULL,
+  set_category_id INTEGER REFERENCES categories(id),
+  set_payee TEXT,
+  add_tags TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE budgets(
+  id INTEGER PRIMARY KEY,
+  category_id INTEGER NOT NULL REFERENCES categories(id),
+  period TEXT NOT NULL CHECK(period IN ('monthly','quarterly','yearly')),
+  amount_minor INTEGER NOT NULL CHECK(amount_minor > 0 AND amount_minor <= 10000000000000),
+  rollover INTEGER NOT NULL DEFAULT 0 CHECK(rollover IN (0,1)),
+  start_date TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(category_id, period)
+);
+
+CREATE TABLE recurring(
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK(length(name) BETWEEN 1 AND 64),
+  kind TEXT NOT NULL CHECK(kind IN ('bill','income','emi','subscription','other')),
+  account_id INTEGER NOT NULL REFERENCES accounts(id),
+  amount_minor INTEGER NOT NULL CHECK(amount_minor != 0 AND abs(amount_minor) <= 10000000000000),
+  category_id INTEGER REFERENCES categories(id),
+  payee TEXT NOT NULL DEFAULT '',
+  freq TEXT NOT NULL CHECK(freq IN ('daily','weekly','monthly','quarterly','yearly')),
+  every INTEGER NOT NULL DEFAULT 1 CHECK(every BETWEEN 1 AND 366),
+  start_date TEXT NOT NULL,
+  next_index INTEGER NOT NULL DEFAULT 0 CHECK(next_index >= 0),
+  next_due TEXT NOT NULL,
+  end_date TEXT,
+  auto_post INTEGER NOT NULL DEFAULT 0 CHECK(auto_post IN (0,1)),
+  remind_days INTEGER NOT NULL DEFAULT 3 CHECK(remind_days BETWEEN 0 AND 60),
+  active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE goals(
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK(length(name) BETWEEN 1 AND 64),
+  target_minor INTEGER NOT NULL CHECK(target_minor > 0 AND target_minor <= 10000000000000),
+  currency TEXT NOT NULL CHECK(length(currency)=3),
+  target_date TEXT,
+  account_id INTEGER REFERENCES accounts(id),
+  archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0,1)),
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE goal_contributions(
+  id INTEGER PRIMARY KEY,
+  goal_id INTEGER NOT NULL REFERENCES goals(id),
+  date TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL CHECK(amount_minor != 0 AND abs(amount_minor) <= 10000000000000),
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX idx_goal_contrib ON goal_contributions(goal_id, date);
+
+CREATE TABLE alert_settings(
+  id INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL CHECK(kind IN ('low_balance')),
+  account_id INTEGER NOT NULL REFERENCES accounts(id),
+  threshold_minor INTEGER NOT NULL CHECK(abs(threshold_minor) <= 10000000000000),
+  UNIQUE(kind, account_id)
 );
 "#;

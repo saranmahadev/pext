@@ -545,6 +545,7 @@ fn finish_import(
                     payee: &payee,
                     memo: &t.p.memo,
                     amount_minor: t.p.amount_minor,
+                    date: t.p.date,
                 },
             )?;
             category_id_v = r.category_id;
