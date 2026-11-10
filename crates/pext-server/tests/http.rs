@@ -211,7 +211,9 @@ fn dashboard_is_static_and_locked_down() {
 }
 
 fn sha_b64(s: &str) -> String {
-    let hex = pext_engine::audit::sha256_hex(s);
+    // Browsers normalise CRLF to LF before hashing inline text for CSP.
+    let s = s.replace("\r\n", "\n").replace('\r', "\n");
+    let hex = pext_engine::audit::sha256_hex(&s);
     let bytes: Vec<u8> = (0..hex.len())
         .step_by(2)
         .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())

@@ -207,7 +207,12 @@ fn base64(bytes: &[u8]) -> String {
 }
 
 fn hash_b64(s: &str) -> String {
-    let hex = pext_engine::audit::sha256_hex(s);
+    // HTML parsers normalise CRLF (and lone CR) to LF before computing the
+    // hash of inline script/style text for CSP, so hash the normalised form
+    // too. Without this, a CRLF checkout (e.g. on Windows) produces a hash
+    // that no browser matches and the dashboard is blocked by its own CSP.
+    let s = s.replace("\r\n", "\n").replace('\r', "\n");
+    let hex = pext_engine::audit::sha256_hex(&s);
     let bytes: Vec<u8> = (0..hex.len())
         .step_by(2)
         .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap_or(0))
@@ -231,16 +236,18 @@ fn between<'a>(s: &'a str, open: &str, close: &str) -> &'a str {
 /// CSP that allows only the dashboard's own inline script and style (by hash).
 pub fn dashboard_csp() -> &'static str {
     static CSP: OnceLock<String> = OnceLock::new();
-    CSP.get_or_init(|| {
-        let script = between(DASHBOARD, "<script>", "</script>");
-        let style = between(DASHBOARD, "<style>", "</style>");
-        format!(
-            "default-src 'none'; script-src 'sha256-{}'; style-src 'sha256-{}'; connect-src 'self'; \
-             img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
-            hash_b64(script),
-            hash_b64(style)
-        )
-    })
+    CSP.get_or_init(|| csp_for(DASHBOARD))
+}
+
+fn csp_for(html: &str) -> String {
+    let script = between(html, "<script>", "</script>");
+    let style = between(html, "<style>", "</style>");
+    format!(
+        "default-src 'none'; script-src 'sha256-{}'; style-src 'sha256-{}'; connect-src 'self'; \
+         img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        hash_b64(script),
+        hash_b64(style)
+    )
 }
 
 impl App {
@@ -886,4 +893,35 @@ fn serve_connection(
         ),
     };
     write_response(&mut stream, &response, false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn csp_hashes_normalise_crlf_to_lf() {
+        // Browsers normalise CRLF to LF before hashing inline text; the server
+        // must do the same or a CRLF checkout gets blocked by its own CSP.
+        let html = "<style>\r\nbody{color:red}\r\n</style>\
+                    <script>\r\nvar x=1;\r\n</script>";
+        let csp = csp_for(html);
+        assert!(csp.contains(&format!(
+            "style-src 'sha256-{}'",
+            hash_b64("\nbody{color:red}\n")
+        )));
+        assert!(csp.contains(&format!(
+            "script-src 'sha256-{}'",
+            hash_b64("\nvar x=1;\n")
+        )));
+    }
+
+    #[test]
+    fn dashboard_csp_uses_dashboard_text() {
+        let csp = dashboard_csp();
+        let script = between(DASHBOARD, "<script>", "</script>");
+        let style = between(DASHBOARD, "<style>", "</style>");
+        assert!(csp.contains(&hash_b64(script)));
+        assert!(csp.contains(&hash_b64(style)));
+    }
 }
